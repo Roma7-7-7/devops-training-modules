@@ -1,9 +1,9 @@
 name: Wiki Documentation
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
 
 permissions:
   contents: write
@@ -12,10 +12,19 @@ jobs:
   update-wiki:
     name: Update Wiki
     runs-on: ubuntu-latest
+    # Only run when the Release workflow succeeded (i.e. a real tag was created).
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout modules repo
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0   # needed for git describe to find the tag
+
+      - name: Get release tag
+        id: tag
+        run: echo "name=$(git describe --tags --abbrev=0)" >> $GITHUB_OUTPUT
 
       - name: Generate docs — modules/s3
         uses: terraform-docs/gh-actions@v1.3.0
@@ -37,7 +46,7 @@ jobs:
           cat > wiki-repo/Home.md <<'EOF'
           # Terraform Modules Documentation
 
-          Auto-generated from source. Last updated: ${{ github.ref_name }}
+          Auto-generated from source. Last updated: ${{ steps.tag.outputs.name }}
 
           ## Available Modules
 
@@ -49,7 +58,7 @@ jobs:
 
           ```hcl
           module "core" {
-            source = "git::https://github.com/${{ github.repository }}.git//modules/s3?ref=${{ github.ref_name }}"
+            source = "git::https://github.com/${{ github.repository }}.git//modules/s3?ref=${{ steps.tag.outputs.name }}"
           }
           ```
           EOF
@@ -59,5 +68,5 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git diff --staged --quiet || git commit -m "docs: update module documentation for ${{ github.ref_name }}"
+          git diff --staged --quiet || git commit -m "docs: update module documentation for ${{ steps.tag.outputs.name }}"
           git push
