@@ -1,0 +1,63 @@
+name: Wiki Documentation
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  update-wiki:
+    name: Update Wiki
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout modules repo
+        uses: actions/checkout@v4
+
+      - name: Generate docs — modules/s3
+        uses: terraform-docs/gh-actions@v1.3.0
+        with:
+          working-dir: modules/s3
+          output-file: s3-module-docs.md
+          output-method: replace
+          git-push: false
+
+      - name: Push docs to GitHub Wiki
+        run: |
+          # Clone the wiki repo (separate git repo at <repo>.wiki.git)
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki-repo
+
+          # Copy generated docs into the wiki
+          cp modules/s3/s3-module-docs.md    wiki-repo/Module-S3.md
+
+          # Write an index page
+          cat > wiki-repo/Home.md <<'EOF'
+          # Terraform Modules Documentation
+
+          Auto-generated from source. Last updated: ${{ github.ref_name }}
+
+          ## Available Modules
+
+          - [[Module-S3]] — Reusable S3 bucket with versioning, encryption, and public access block
+
+          ## Usage
+
+          Reference modules in your Terraform configuration using a pinned version tag:
+
+          ```hcl
+          module "core" {
+            source = "git::https://github.com/${{ github.repository }}.git//modules/s3?ref=${{ github.ref_name }}"
+          }
+          ```
+          EOF
+
+          # Commit and push
+          cd wiki-repo
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git diff --staged --quiet || git commit -m "docs: update module documentation for ${{ github.ref_name }}"
+          git push

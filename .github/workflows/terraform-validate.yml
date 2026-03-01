@@ -1,0 +1,94 @@
+name: Terraform Validate
+run-name: "Validate PR #${{ github.event.pull_request.number }} by @${{ github.actor }}"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'modules/**'
+      - '.github/workflows/**'
+
+# Cancel in-progress validate runs when a new commit is pushed to the PR.
+concurrency:
+  group: validate-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: '1.14.5'
+  TF_IN_AUTOMATION: 'true'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # JOB: validate
+  # Runs fmt check, terraform validate on every module, and tfsec.
+  # Blocks merge if fmt or validate fail. tfsec warns only.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive modules/
+
+      - name: Terraform Validate
+        run: |
+          for dir in modules/*/; do
+            echo "==> Validating $dir"
+            (cd "$dir" && terraform init -backend=false -input=false > /dev/null && terraform validate -no-color)
+          done
+
+      - name: tfsec Security Scan
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: modules
+          soft_fail: true
+
+  # ---------------------------------------------------------------------------
+  # JOB: lint
+  # Runs tflint per module in parallel via matrix.
+  # Disabled rules match .pre-commit-config.yaml for consistency.
+  # fail-fast: false ensures a failure in one module does not cancel others.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: TFLint (${{ matrix.module }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: s3
+            path: modules/s3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: TFLint
+        working-directory: ${{ matrix.path }}
+        run: |
+          tflint --init
+          tflint --no-color \
+            --disable-rule=terraform_required_providers \
+            --disable-rule=terraform_required_version \
+            --disable-rule=terraform_typed_variables \
+            --disable-rule=terraform_deprecated_lookup \
+            --disable-rule=terraform_unused_declarations \
+            --disable-rule=terraform_deprecated_index
